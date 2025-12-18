@@ -1,145 +1,44 @@
-# Orchestrator v0.4
-# Backend mínimo com Discovery + MVP + Software Architect Agent
+# Orchestrator v0.6
+# Orquestrador com Architect Agent v1.3 (contexto + geração consciente)
 
 from fastapi import FastAPI, Form
 from fastapi.responses import JSONResponse
 from datetime import datetime
+from pathlib import Path
+
+# Agentes técnicos
 from agent_gerar_codigo import gerar_codigo
 from agent_revisar_codigo import revisar_codigo
 from agent_testes import definir_estrategia_testes
 from agent_deploy import preparar_deploy
 from agent_release import preparar_release
-import os
 
-app = FastAPI(title="AI Orchestrator v0.4")
+# Agentes de produto
+from product_discovery_agent import ProductDiscoveryAgent
+from product_manager_agent import definir_mvp_agent
 
-BASE_DIR = "projects"
-os.makedirs(BASE_DIR, exist_ok=True)
+# Agente de arquitetura
+from architect_agent_v_1 import ContextBuilder, ArchitectAgent
 
-# -----------------------------
-# Product Discovery Agent
-# -----------------------------
+app = FastAPI(title="AI Orchestrator v0.6")
 
-def product_discovery_agent(description: str) -> str:
-    return f"""
-# Product Discovery
+BASE_DIR = Path("projects")
+BASE_DIR.mkdir(exist_ok=True)
 
-## Problema percebido
-{description}
+# --------------------------------------------------
+# LLM CALL (placeholder)
+# --------------------------------------------------
 
-## Quem sofre o problema
-- Usuários finais
-- Operação do negócio
+def fake_llm_call(prompt: str) -> str:
+    """
+    Placeholder de LLM.
+    Futuro: OpenAI / Azure / Ollama / Local LLM
+    """
+    return prompt
 
-## Perguntas-chave
-- Quem usará o sistema diariamente?
-- Qual impacto se o problema NÃO for resolvido?
-- Existe solução manual hoje?
-- Qual urgência real?
-
-## Riscos iniciais
-- Expectativa inflada
-- Falta de clareza do escopo
-
-## Hipóteses de valor
-- Resolver uma dor principal antes de expandir
-- MVP simples pode gerar a maior parte do valor
-"""
-
-# -----------------------------
-# Product Manager Agent (MVP)
-# -----------------------------
-
-def definir_mvp_agent(discovery_text: str) -> str:
-    return f"""
-# Definição de MVP
-
-## Objetivo do MVP
-Validar rapidamente se a solução resolve o problema principal de controle de estoque.
-
-## Escopo do MVP (IN)
-- Cadastro de produtos
-- Controle de entrada e saída
-- Definição de estoque mínimo
-- Alerta simples de reposição
-
-## Fora do MVP (OUT)
-- Previsão com IA
-- Relatórios avançados
-- Aplicativo mobile
-- Integração com ERP
-
-## User Stories principais
-1. Como operador, quero cadastrar produtos para controlar o estoque.
-2. Como operador, quero registrar entradas e saídas para manter saldo correto.
-3. Como operador, quero ser alertado quando o estoque estiver baixo.
-
-## Critérios de sucesso
-- Produto cadastrado em menos de 2 minutos
-- Alerta funcionando em produção
-- Uso diário pelo cliente
-
-## Riscos aceitos
-- Interface simples
-- Processos manuais iniciais
-
----
-
-Baseado no discovery:
-{discovery_text}
-"""
-
-# -----------------------------
-# Software Architect Agent
-# -----------------------------
-
-def arquitetura_agent(discovery_text: str, mvp_text: str) -> str:
-    return f"""
-# Arquitetura de Software
-
-## Objetivo arquitetural
-Entregar o MVP com simplicidade, baixo custo e facilidade de evolução.
-
-## Estilo arquitetural
-- Monólito modular
-- Separação por camadas
-- Preparado para evolução futura
-
-## Stack sugerida
-- Backend: Java 21 + Spring Boot
-- Banco de dados: PostgreSQL
-- API: REST
-- Infraestrutura: Docker
-
-## Estrutura de pastas sugerida
-- domain
-- application
-- infrastructure
-- interfaces
-
-## Decisões arquiteturais (ADR)
-1. Não utilizar microsserviços no MVP
-2. Não utilizar mensageria no MVP
-3. Priorizar legibilidade e simplicidade
-
-## Riscos técnicos aceitos
-- Escalabilidade limitada inicialmente
-- Deploy manual no início
-
----
-
-Referências:
-
-## Discovery
-{discovery_text}
-
-## MVP
-{mvp_text}
-"""
-
-# -----------------------------
+# --------------------------------------------------
 # Slack Commands Endpoint
-# -----------------------------
+# --------------------------------------------------
 
 @app.post("/slack/commands")
 async def slack_commands(
@@ -149,97 +48,117 @@ async def slack_commands(
 ):
     timestamp = datetime.utcnow().isoformat()
 
+    # ---------------- NOVO PRODUTO ----------------
     if command == "/novo-produto":
-        project_name = text.replace(" ", "_").lower() or "projeto_sem_nome"
-        project_path = os.path.join(BASE_DIR, project_name)
-        os.makedirs(project_path, exist_ok=True)
 
-        discovery_output = product_discovery_agent(text)
+        if not text:
+            return JSONResponse({
+                "response_type": "ephemeral",
+                "text": "Descreva o produto após o comando."
+            })
 
-        with open(os.path.join(project_path, "discovery.md"), "w", encoding="utf-8") as f:
-            f.write(discovery_output)
+        project_name = text.replace(" ", "_").lower()
+        project_path = BASE_DIR / project_name
+
+        #  Garante que o diretório existe
+        project_path.mkdir(parents=True, exist_ok=True)
+
+        agent = ProductDiscoveryAgent(text)
+        result = agent.run()
+
+        (project_path / "discovery.md").write_text(
+            result["document"], encoding="utf-8"
+        )
+
+        if result["blocked"]:
+            return JSONResponse({
+                "response_type": "ephemeral",
+                "text": (
+                    "Discovery criado, mas BLOQUEADO\n\n"
+                    "Perguntas pendentes:\n- " +
+                    "\n- ".join(result["questions"])
+                )
+            })
 
         return JSONResponse({
             "response_type": "in_channel",
-            "text": f"Discovery criado para o projeto: {project_name}."
+            "text": f"Discovery criado e aprovado para o projeto: {project_name}"
         })
 
+    # ---------------- DEFINIR MVP ----------------
     if command == "/definir-mvp":
         project_name = text.replace(" ", "_").lower()
-        project_path = os.path.join(BASE_DIR, project_name)
-        discovery_file = os.path.join(project_path, "discovery.md")
+        project_path = BASE_DIR / project_name
+        discovery_file = project_path / "discovery.md"
 
-        if not os.path.exists(discovery_file):
+        if not discovery_file.exists():
             return JSONResponse({
                 "response_type": "ephemeral",
                 "text": "Discovery não encontrado. Execute /novo-produto primeiro."
             })
 
-        with open(discovery_file, "r", encoding="utf-8") as f:
-            discovery_text = f.read()
-
+        discovery_text = discovery_file.read_text(encoding="utf-8")
         mvp_output = definir_mvp_agent(discovery_text)
-
-        with open(os.path.join(project_path, "mvp.md"), "w", encoding="utf-8") as f:
-            f.write(mvp_output)
+        (project_path / "mvp.md").write_text(mvp_output, encoding="utf-8")
 
         return JSONResponse({
             "response_type": "in_channel",
             "text": f"MVP definido com sucesso para o projeto: {project_name}."
         })
-    
-    if command == "/gerar-codigo":
-        result = gerar_codigo(text)
-        return {"text": result}
-    
-    if command == "/revisar-codigo":
-        result = revisar_codigo(text)
-        return {"text": result}
-    
-    if command == "/testes":
-        result = definir_estrategia_testes(text)
-        return {"text": result}
-    
-    if command == "/deploy":
-        result = preparar_deploy(text)
-        return {"text": result}
-    
-    if command == "/release":
-        result = preparar_release(text)
-        return {"text": result}
 
+    # ---------------- ARQUITETURA (AGENTE REAL) ----------------
     if command == "/arquitetura":
         project_name = text.replace(" ", "_").lower()
-        project_path = os.path.join(BASE_DIR, project_name)
-        discovery_file = os.path.join(project_path, "discovery.md")
-        mvp_file = os.path.join(project_path, "mvp.md")
+        project_path = BASE_DIR / project_name
 
-        if not os.path.exists(discovery_file) or not os.path.exists(mvp_file):
+        if not project_path.exists():
+            return JSONResponse({
+                "response_type": "ephemeral",
+                "text": "Projeto não encontrado."
+            })
+
+        context = ContextBuilder(project_name).build()
+
+        if not context.get("discovery") or not context.get("mvp"):
             return JSONResponse({
                 "response_type": "ephemeral",
                 "text": "Discovery ou MVP não encontrado. Execute as etapas anteriores."
             })
 
-        with open(discovery_file, "r", encoding="utf-8") as f:
-            discovery_text = f.read()
+        agent = ArchitectAgent(context)
+        architecture_output = agent.generate_architecture(fake_llm_call)
 
-        with open(mvp_file, "r", encoding="utf-8") as f:
-            mvp_text = f.read()
-
-        arquitetura_output = arquitetura_agent(discovery_text, mvp_text)
-
-        with open(os.path.join(project_path, "arquitetura.md"), "w", encoding="utf-8") as f:
-            f.write(arquitetura_output)
+        (project_path / "arquitetura.md").write_text(
+            architecture_output,
+            encoding="utf-8"
+        )
 
         return JSONResponse({
             "response_type": "in_channel",
-            "text": f"Arquitetura definida para o projeto: {project_name}."
+            "text": f"Arquitetura definida com sucesso para o projeto: {project_name}."
         })
+
+    # ---------------- PIPELINE TÉCNICA ----------------
+    if command == "/gerar-codigo":
+        return {"text": gerar_codigo(text)}
+
+    if command == "/revisar-codigo":
+        return {"text": revisar_codigo(text)}
+
+    if command == "/testes":
+        return {"text": definir_estrategia_testes(text)}
+
+    if command == "/deploy":
+        return {"text": preparar_deploy(text)}
+
+    if command == "/release":
+        return {"text": preparar_release(text)}
 
     return JSONResponse({
         "response_type": "ephemeral",
         "text": "Comando não reconhecido."
     })
+
 
 @app.get("/health")
 def health():
