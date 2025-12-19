@@ -1,0 +1,25 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(
+    title="{{ project_name }}",
+    version="0.1.0",
+    description="API gerada via Esteira de Agentes"
+)
+
+# Configuração de CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/health")
+async def health_check():
+    """Health Check para monitoramento (Docker/K8s)"""
+    return {"status": "ok", "service": "{{ project_name }}"}
+
+@app.get("/")
+async def root():
+    return {"message": "Bem-vindo ao {{ project_name }}"}

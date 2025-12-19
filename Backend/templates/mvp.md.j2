@@ -1,0 +1,27 @@
+# Definição de MVP: {{ project_name }}
+
+## Objetivo do MVP
+Validar rapidamente se a solução resolve o problema principal.
+
+## Contexto do Discovery
+> {{ discovery_summary }}
+
+## Escopo do MVP (IN)
+- Funcionalidade Principal (Core)
+- Autenticação básica
+- CRUD essencial
+
+## Fora do MVP (OUT)
+- Relatórios complexos
+- Integrações avançadas
+
+## User Stories Principais
+{% for story in user_stories %}
+- [ ] {{ story }}
+{% else %}
+- [ ] *Nenhuma história específica fornecida.*
+{% endfor %}
+
+## Critérios de sucesso
+- Sistema funcional em produção
+- Fluxos acima validados

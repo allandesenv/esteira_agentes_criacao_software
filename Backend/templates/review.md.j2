@@ -1,0 +1,28 @@
+# Relatório de Revisão de Código
+**Projeto:** {{ project_name }}
+**Data:** {{ date }}
+
+## Resumo Executivo
+- **Status:** {% if success %}APROVADO{% else %}REQUER ATENCAO{% endif %}
+- **Arquivos Verificados:** {{ total_files }}
+- **Total de Problemas:** {{ total_issues }}
+
+---
+
+## 1. Verificação Estrutural
+Verificação da presença de arquivos essenciais definidos na Arquitetura.
+
+{% for check in structure_checks %}
+- [{% if check.exists %}x{% else %} {% endif %}] **{{ check.file }}**: {% if check.exists %}OK{% else %}Ausente{% endif %}
+{% endfor %}
+
+---
+
+## 2. Análise Estática (Linter)
+Ferramenta utilizada: **Ruff**
+
+{% if linter_issues %}
+### Problemas Encontrados:
+```text
+{{ linter_output }}
+{% endif %}

@@ -61,7 +61,7 @@ Arquitetura definida com base na maturidade **{maturity}** do produto.
 {self._evolution_path(style)}
 """
 
-        # 🔮 Futuro: LLM melhora a redação
+        #Futuro: LLM melhora a redação
         if llm_call:
             architecture = llm_call(architecture)
 

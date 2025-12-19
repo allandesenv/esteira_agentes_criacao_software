@@ -1,44 +1,41 @@
-# Orchestrator v0.6
-# Orquestrador com Architect Agent v1.3 (contexto + geração consciente)
-
+import os
+import subprocess
+from ai_service import AIService
+from pathlib import Path
+from datetime import datetime
 from fastapi import FastAPI, Form
 from fastapi.responses import JSONResponse
-from datetime import datetime
-from pathlib import Path
+from jinja2 import Environment, FileSystemLoader
 
-# Agentes técnicos
-from agent_gerar_codigo import gerar_codigo
-from agent_revisar_codigo import revisar_codigo
-from agent_testes import definir_estrategia_testes
-from agent_deploy import preparar_deploy
-from agent_release import preparar_release
+# Imports dos nossos novos módulos
+from utils.logger import setup_logger
+from utils.git_manager import GitManager
 
-# Agentes de produto
-from product_discovery_agent import ProductDiscoveryAgent
-from product_manager_agent import definir_mvp_agent
-
-# Agente de arquitetura
-from architect_agent_v_1 import ContextBuilder, ArchitectAgent
-
-app = FastAPI(title="AI Orchestrator v0.6")
+# --- Configuração Inicial ---
+app = FastAPI(title="AI Orchestrator v0.5 - Robust Mode")
+logger = setup_logger()
 
 BASE_DIR = Path("projects")
 BASE_DIR.mkdir(exist_ok=True)
 
-# --------------------------------------------------
-# LLM CALL (placeholder)
-# --------------------------------------------------
+# Configuração do Jinja2 (Templates)
+TEMPLATES_DIR = Path("templates")
+env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
 
-def fake_llm_call(prompt: str) -> str:
-    """
-    Placeholder de LLM.
-    Futuro: OpenAI / Azure / Ollama / Local LLM
-    """
-    return prompt
+ai_brain = AIService()
 
-# --------------------------------------------------
-# Slack Commands Endpoint
-# --------------------------------------------------
+# --- Funções Auxiliares de Renderização ---
+
+def render_template(template_name: str, context: dict) -> str:
+    """Renderiza um template Jinja2 com o contexto fornecido."""
+    try:
+        template = env.get_template(template_name)
+        return template.render(**context)
+    except Exception as e:
+        logger.error(f"Erro ao renderizar template {template_name}: {e}")
+        return f"Erro na geração do artefato: {e}"
+
+# --- Endpoints ---
 
 @app.post("/slack/commands")
 async def slack_commands(
@@ -46,120 +43,287 @@ async def slack_commands(
     text: str = Form(""),
     user_name: str = Form("unknown")
 ):
-    timestamp = datetime.utcnow().isoformat()
+    try:
+        # ---------------------------------------------------------
+        # 1. Extração e Definição do Nome do Projeto (CORREÇÃO AQUI)
+        # ---------------------------------------------------------
+        # Tenta pegar o primeiro nome do texto como nome do projeto
+        # Ex: "/novo-produto SistemaEstoque" -> project_name = "sistemaestoque"
+        if " " in text:
+            raw_project_name = text.split(" ")[0]
+            description = text # Mantém o texto todo como descrição
+        else:
+            raw_project_name = text if text else "projeto_sem_nome"
+            description = text
 
-    # ---------------- NOVO PRODUTO ----------------
-    if command == "/novo-produto":
+        project_name = raw_project_name.replace(" ", "_").lower()
+        project_path = BASE_DIR / project_name
+        project_path.mkdir(exist_ok=True)
 
-        if not text:
+        # Inicializa o Git Manager para este caminho
+        git_mgr = GitManager(project_path)
+
+        # ---------------------------------------------------------
+        # 2. Lógica dos Comandos
+        # ---------------------------------------------------------
+        if command == "/novo-produto":
+            logger.info(f"Acionando IA para Discovery do projeto: {project_name}")
+            
+            # 1. IA Gera o Conteúdo (Dicionário)
+            discovery_data = ai_brain.generate_discovery(description)
+            
+            # Adicionamos dados de infra ao dicionário da IA
+            discovery_data["project_name"] = project_name
+            discovery_data["date"] = datetime.now().strftime("%Y-%m-%d")
+
+            # 2. Jinja2 Renderiza o Arquivo
+            content = render_template("discovery.md.j2", discovery_data)
+            
+            # 3. Salvar e Checkpoint
+            (project_path / "discovery.md").write_text(content, encoding="utf-8")
+            git_mgr.checkpoint("Agente Discovery (IA): Criou discovery.md detalhado")
+
             return JSONResponse({
-                "response_type": "ephemeral",
-                "text": "Descreva o produto após o comando."
+                "response_type": "in_channel",
+                "text": f"Discovery Inteligente criado para: *{project_name}*.\nIA analisou Personas, Riscos e Perguntas."
             })
 
-        project_name = text.replace(" ", "_").lower()
-        project_path = BASE_DIR / project_name
+        elif command == "/definir-mvp":
+            discovery_file = project_path / "discovery.md"
+            if not discovery_file.exists():
+                return {"text": "Erro: Discovery não encontrado."}
 
-        #  Garante que o diretório existe
-        project_path.mkdir(parents=True, exist_ok=True)
+            discovery_content = discovery_file.read_text(encoding="utf-8")
+            
+            logger.info(f"Acionando IA para Definição de MVP: {project_name}")
 
-        agent = ProductDiscoveryAgent(text)
-        result = agent.run()
+            # 1. IA lê o Discovery e Gera o MVP (User Stories, Escopo)
+            mvp_data = ai_brain.generate_mvp(discovery_content)
+            
+            # Adicionamos contexto extra
+            mvp_data["project_name"] = project_name
+            mvp_data["discovery_summary"] = discovery_content[:300] + "..."
 
-        (project_path / "discovery.md").write_text(
-            result["document"], encoding="utf-8"
-        )
+            # 2. Renderiza
+            content = render_template("mvp.md.j2", mvp_data)
 
-        if result["blocked"]:
+            # 3. Salvar e Checkpoint
+            (project_path / "mvp.md").write_text(content, encoding="utf-8")
+            git_mgr.checkpoint(f"Agente Produto (IA): MVP definido com {len(mvp_data['user_stories'])} User Stories")
+
+            return {"text": f"MVP Inteligente definido para: *{project_name}*."}
+        # --- COMANDO REINSERIDO E ATUALIZADO ---
+        elif command == "/arquitetura":
+            discovery_file = project_path / "discovery.md"
+            mvp_file = project_path / "mvp.md"
+
+            # Validação: Regra de Ouro "Nenhuma etapa crítica roda sem artefato anterior"
+            if not discovery_file.exists() or not mvp_file.exists():
+                return {"text": "Erro: Discovery ou MVP ausentes. Siga a ordem da esteira."}
+
+            # Leitura dos Contextos
+            discovery_text = discovery_file.read_text(encoding="utf-8")
+            mvp_text = mvp_file.read_text(encoding="utf-8")
+
+            # Geração via Template
+            content = render_template("arquitetura.md.j2", {
+                "project_name": project_name,
+                "discovery_context": discovery_text[:500] + "...", # Passa um resumo para o documento
+                "mvp_context": mvp_text[:500] + "..."
+            })
+
+            # Salvar Artefato
+            (project_path / "arquitetura.md").write_text(content, encoding="utf-8")
+
+            # Versionamento Automático
+            git_mgr.checkpoint("Agente Arquiteto: Definiu arquitetura.md e Stack Tecnológica")
+
             return JSONResponse({
-                "response_type": "ephemeral",
-                "text": (
-                    "Discovery criado, mas BLOQUEADO\n\n"
-                    "Perguntas pendentes:\n- " +
-                    "\n- ".join(result["questions"])
+                "response_type": "in_channel",
+                "text": f"Arquitetura definida para: *{project_name}*.\nArquivo `arquitetura.md` gerado."
+            })
+        # ---------------------------------------
+
+        elif command == "/gerar-codigo":
+            # 1. Validação de Dependência
+            if not (project_path / "arquitetura.md").exists():
+                return {"text": "Erro: Arquitetura não definida. Execute /arquitetura primeiro."}
+
+            logger.info(f"🏗️ Iniciando scaffolding para: {project_name}")
+
+            # 2. Definição da Estrutura de Pastas (Baseado no Arquitetura.md)
+            dirs_to_create = [
+                project_path / "app",
+                project_path / "app" / "api",
+                project_path / "app" / "core",
+                project_path / "app" / "domain",
+                project_path / "tests"
+            ]
+
+            for d in dirs_to_create:
+                d.mkdir(parents=True, exist_ok=True)
+                # Cria __init__.py para tornar pacote Python
+                (d / "__init__.py").touch()
+
+            # 3. Renderização e Criação dos Arquivos
+            files_map = {
+                "main.py.j2": project_path / "app" / "main.py",
+                "requirements.txt.j2": project_path / "requirements.txt",
+                "test_health.py.j2": project_path / "tests" / "test_health.py",
+                "README_TECNICO.md.j2": project_path / "README.md"
+            }
+
+            for template_name, file_path in files_map.items():
+                content = render_template(template_name, {"project_name": project_name})
+                file_path.write_text(content, encoding="utf-8")
+
+            # 4. Checkpoint
+            git_mgr.checkpoint("Agente Dev: Scaffolding completo (App, Tests, Configs)")
+
+            return JSONResponse({
+                "response_type": "in_channel",
+                "text": f"Código base gerado para: *{project_name}*.\nEstrutura de pastas criada conforme Arquitetura."
+            })
+
+        elif command == "/revisar-codigo":
+            logger.info(f"Iniciando revisão de código para: {project_name}")
+
+            # -------------------------------------------
+            # 1. Verificação Estrutural (Arquivos)
+            # -------------------------------------------
+            expected_files = [
+                "app/main.py",
+                "app/core",
+                "requirements.txt",
+                "Dockerfile",
+                "README.md"
+            ]
+            
+            structure_results = []
+            all_files_exist = True
+            
+            for file_rel_path in expected_files:
+                full_path = project_path / file_rel_path
+                exists = full_path.exists()
+                structure_results.append({
+                    "file": file_rel_path,
+                    "exists": exists
+                })
+                if not exists:
+                    all_files_exist = False
+
+            # -------------------------------------------
+            # 2. Análise Estática (Ruff)
+            # -------------------------------------------
+            linter_output = ""
+            linter_success = True
+            total_issues = 0
+
+            try:
+                # Executa o Ruff apenas no diretório do projeto
+                result = subprocess.run(
+                    ["ruff", "check", str(project_path), "--output-format=text"],
+                    capture_output=True,
+                    text=True
                 )
-            })
+                
+                if result.returncode != 0:
+                    linter_success = False
+                    linter_output = result.stdout
+                    # Conta linhas não vazias como aproximação de erros
+                    total_issues = len([l for l in linter_output.split('\n') if l.strip()])
+                
+            except FileNotFoundError:
+                linter_output = "ERRO: Ferramenta 'ruff' não instalada. Execute 'pip install ruff'."
+                linter_success = False
+                total_issues = 1
 
-        return JSONResponse({
-            "response_type": "in_channel",
-            "text": f"Discovery criado e aprovado para o projeto: {project_name}"
-        })
+            # -------------------------------------------
+            # 3. Compilar Dados e Renderizar
+            # -------------------------------------------
+            overall_success = all_files_exist and linter_success
+            
+            # Contagem de arquivos Python para estatística
+            py_files_count = len(list(project_path.glob("**/*.py")))
 
-    # ---------------- DEFINIR MVP ----------------
-    if command == "/definir-mvp":
-        project_name = text.replace(" ", "_").lower()
-        project_path = BASE_DIR / project_name
-        discovery_file = project_path / "discovery.md"
+            review_data = {
+                "project_name": project_name,
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "success": overall_success,
+                "total_files": py_files_count,
+                "total_issues": total_issues,
+                "structure_checks": structure_results,
+                "linter_issues": not linter_success,
+                "linter_output": linter_output.strip()
+            }
 
-        if not discovery_file.exists():
+            content = render_template("review.md.j2", review_data)
+            
+            # Salvar Relatório
+            report_path = project_path / "review.md"
+            report_path.write_text(content, encoding="utf-8")
+
+            # Checkpoint Git
+            status_msg = "Aprovado" if overall_success else "Com Apontamentos"
+            git_mgr.checkpoint(f"Agente Reviewer: Relatório gerado ({status_msg})")
+
             return JSONResponse({
-                "response_type": "ephemeral",
-                "text": "Discovery não encontrado. Execute /novo-produto primeiro."
+                "response_type": "in_channel",
+                "text": f"Revisão concluída para *{project_name}*.\nStatus: *{'Aprovado' if overall_success else 'Atenção'}*\nRelatório salvo em `review.md`."
             })
-
-        discovery_text = discovery_file.read_text(encoding="utf-8")
-        mvp_output = definir_mvp_agent(discovery_text)
-        (project_path / "mvp.md").write_text(mvp_output, encoding="utf-8")
-
-        return JSONResponse({
-            "response_type": "in_channel",
-            "text": f"MVP definido com sucesso para o projeto: {project_name}."
-        })
-
-    # ---------------- ARQUITETURA (AGENTE REAL) ----------------
-    if command == "/arquitetura":
-        project_name = text.replace(" ", "_").lower()
-        project_path = BASE_DIR / project_name
-
-        if not project_path.exists():
-            return JSONResponse({
-                "response_type": "ephemeral",
-                "text": "Projeto não encontrado."
+        
+        elif command == "/testes":
+            mvp_file = project_path / "mvp.md"
+            if not mvp_file.exists():
+                return {"text": "Erro: MVP não encontrado."}
+            
+            mvp_text = mvp_file.read_text(encoding="utf-8")
+            
+            content = render_template("testes.md.j2", {
+                "project_name": project_name,
+                "mvp_summary": mvp_text[:300] + "..."
             })
+            
+            (project_path / "testes.md").write_text(content, encoding="utf-8")
+            git_mgr.checkpoint("Agente QA: Definiu estratégia de testes")
+            
+            return {"text": f"Estratégia de testes definida para: *{project_name}*."}
 
-        context = ContextBuilder(project_name).build()
+        elif command == "/deploy":
+            # Gera Dockerfile
+            dockerfile_content = render_template("Dockerfile.j2", {"project_name": project_name})
+            (project_path / "Dockerfile").write_text(dockerfile_content, encoding="utf-8")
+            
+            # Gera docker-compose.yml
+            compose_content = render_template("docker-compose.yml.j2", {"project_name": project_name})
+            (project_path / "docker-compose.yml").write_text(compose_content, encoding="utf-8")
+            
+            git_mgr.checkpoint("Agente DevOps: Configuração Docker gerada")
+            
+            return {"text": f"Arquivos de Deploy (Docker) gerados para: *{project_name}*."}
 
-        if not context.get("discovery") or not context.get("mvp"):
-            return JSONResponse({
-                "response_type": "ephemeral",
-                "text": "Discovery ou MVP não encontrado. Execute as etapas anteriores."
+        elif command == "/release":
+            mvp_file = project_path / "mvp.md"
+            mvp_text = mvp_file.read_text(encoding="utf-8") if mvp_file.exists() else "MVP não localizado."
+            
+            content = render_template("release.md.j2", {
+                "project_name": project_name,
+                "version": "0.1.0-mvp",
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "mvp_summary": mvp_text[:200] + "..."
             })
+            
+            (project_path / "release.md").write_text(content, encoding="utf-8")
+            git_mgr.checkpoint("Agente Release: Release 0.1.0 preparada")
+            
+            return {"text": f"Release Note gerado com sucesso!"}
 
-        agent = ArchitectAgent(context)
-        architecture_output = agent.generate_architecture(fake_llm_call)
+        return {"text": "Comando não reconhecido."}
 
-        (project_path / "arquitetura.md").write_text(
-            architecture_output,
-            encoding="utf-8"
-        )
-
-        return JSONResponse({
-            "response_type": "in_channel",
-            "text": f"Arquitetura definida com sucesso para o projeto: {project_name}."
-        })
-
-    # ---------------- PIPELINE TÉCNICA ----------------
-    if command == "/gerar-codigo":
-        return {"text": gerar_codigo(text)}
-
-    if command == "/revisar-codigo":
-        return {"text": revisar_codigo(text)}
-
-    if command == "/testes":
-        return {"text": definir_estrategia_testes(text)}
-
-    if command == "/deploy":
-        return {"text": preparar_deploy(text)}
-
-    if command == "/release":
-        return {"text": preparar_release(text)}
-
-    return JSONResponse({
-        "response_type": "ephemeral",
-        "text": "Comando não reconhecido."
-    })
-
+    except Exception as e:
+        logger.error(f"Erro processando comando: {e}")
+        return {"text": f"Erro interno: {str(e)}"}
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "mode": "robust-no-ia"}

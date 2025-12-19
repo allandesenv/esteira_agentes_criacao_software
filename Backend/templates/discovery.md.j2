@@ -1,0 +1,25 @@
+# Product Discovery: {{ project_name }}
+**Data:** {{ date }}
+
+##Problema Percebido
+{{ problem_description }}
+
+##Quem sofre com o problema (Personas)
+{% for persona in personas %}
+- {{ persona }}
+{% endfor %}
+
+##Perguntas-chave
+{% for question in key_questions %}
+- {{ question }}
+{% endfor %}
+
+##Riscos Iniciais
+{% for risk in risks %}
+- {{ risk }}
+{% endfor %}
+
+## Hipóteses de Valor
+{% for hypothesis in value_hypotheses %}
+- {{ hypothesis }}
+{% endfor %}

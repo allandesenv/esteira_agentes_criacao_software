@@ -1,0 +1,14 @@
+# {{ project_name }} - Documentação Técnica
+
+## Estrutura do Projeto (Modular Monolith)
+Este projeto segue a arquitetura definida em `arquitetura.md`.
+
+- `app/main.py`: Entrypoint da aplicação.
+- `app/api`: Controladores (Rotas).
+- `app/core`: Configurações (Settings, Envs).
+- `app/domain`: Modelos e Regras de Negócio.
+
+## Como Rodar
+1. Instalar dependências: `pip install -r requirements.txt`
+2. Executar: `uvicorn app.main:app --reload`
+3. Testar: `pytest`

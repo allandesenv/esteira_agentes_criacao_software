@@ -1,0 +1,34 @@
+# Arquitetura de Software: {{ project_name }}
+
+## Objetivo Arquitetural
+Entregar o MVP com simplicidade, baixo custo e facilidade de evolução.
+
+## Estilo Arquitetural
+- Monólito Modular (Modular Monolith)
+- Separação clara de responsabilidades (Domain-Driven Design simplificado)
+
+## Stack Tecnológica Sugerida
+- **Linguagem:** Python 3.11+
+- **Framework:** FastAPI
+- **Banco de Dados:** SQLite (Dev) / PostgreSQL (Prod)
+- **Infra:** Docker & Docker Compose
+
+## Estrutura de Pastas
+- `/app`: Código fonte
+  - `/core`: Configurações e regras globais
+  - `/api`: Endpoints (Routers)
+  - `/domain`: Modelos e regras de negócio
+- `/tests`: Testes automatizados
+
+## Decisões Arquiteturais (ADR)
+1. **Sem Microserviços:** Foco na simplicidade para o MVP.
+2. **Sync vs Async:** Uso de `async/await` para I/O bound operations.
+3. **Testes:** Pytest como runner padrão.
+
+---
+### Contexto Base
+> **Do Discovery:**
+> {{ discovery_context }}
+
+> **Do MVP:**
+> {{ mvp_context }}

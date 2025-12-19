@@ -1,0 +1,21 @@
+# Estratégia de Testes: {{ project_name }}
+
+## Objetivo
+Garantir qualidade mínima para o MVP definido.
+
+## Pirâmide de Testes
+1. **Unitários:** Regras de negócio em `app/domain` e `app/core`.
+2. **Integração:** Endpoints da API (`app/api`).
+3. **E2E / Smoke:** Endpoint `/health` e fluxos críticos.
+
+## Ferramentas
+- **Runner:** `pytest`
+- **Client:** `fastapi.testclient`
+- **Linter:** `ruff`
+
+## Plano de Cobertura
+> Baseado no MVP:
+> {{ mvp_summary }}
+
+- [ ] Cobrir fluxo principal de sucesso (Happy Path)
+- [ ] Validar entradas inválidas (Edge Cases)
